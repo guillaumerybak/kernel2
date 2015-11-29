@@ -273,6 +273,7 @@ fs_initcall(init_chiffrefs_fs);
 static void __exit exit_chiffrefs_fs(void)
 {
 	--once;
+	unregister_filesystem(&chiffrefs_fs_type);
 }
 module_exit(exit_chiffrefs_fs);
 
