@@ -8,22 +8,26 @@
 #include <linux/sched.h>
 #include <linux/parser.h>
 #include <linux/magic.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/uio.h>
+#include <linux/slab.h>
 
 #include "internal.h"
 
-#define CHIFFREFS_DEFAULT_ROTATE	0
+static struct chiffrefs_fs_info chiffrefs_infos;
 
 static const struct super_operations chiffrefs_ops;
 static const struct inode_operations chiffrefs_dir_inode_operations;
 
 static ssize_t chiffrefs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
-	printk("iov: count=%lu\n", from->count);
+	int i;
+
+	for (i = 0; i < from->count; ++i) {
+		((char *)from->kvec->iov_base)[i] += chiffrefs_infos.mount_opts.rotate % 127;
+	}
 	return generic_file_write_iter(iocb, from);
 }
 
@@ -56,9 +60,8 @@ const struct inode_operations chiffrefs_file_inode_operations = {
 	.getattr	= simple_getattr,
 };
 
-
 struct inode *chiffrefs_get_inode(struct super_block *sb,
-				const struct inode *dir, umode_t mode, dev_t dev)
+				  const struct inode *dir, umode_t mode, dev_t dev)
 {
 	struct inode * inode = new_inode(sb);
 
@@ -80,8 +83,6 @@ struct inode *chiffrefs_get_inode(struct super_block *sb,
 		case S_IFDIR:
 			inode->i_op = &chiffrefs_dir_inode_operations;
 			inode->i_fop = &simple_dir_operations;
-
-			/* directory inodes start off with i_nlink == 2 (for "." entry) */
 			inc_nlink(inode);
 			break;
 		case S_IFLNK:
@@ -92,10 +93,6 @@ struct inode *chiffrefs_get_inode(struct super_block *sb,
 	return inode;
 }
 
-/*
- * File creation. Allocate an inode, and we're done..
- */
-/* SMP-safe */
 static int
 chiffrefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
 {
@@ -104,7 +101,7 @@ chiffrefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t de
 
 	if (inode) {
 		d_instantiate(dentry, inode);
-		dget(dentry);	/* Extra count - pin the dentry in core */
+		dget(dentry);
 		error = 0;
 		dir->i_mtime = dir->i_ctime = CURRENT_TIME;
 	}
@@ -161,24 +158,6 @@ static const struct super_operations chiffrefs_ops = {
 	.show_options	= generic_show_options,
 };
 
-struct chiffrefs_mount_opts {
-	int rotate;
-};
-
-enum {
-	Opt_mode,
-	Opt_err
-};
-
-static const match_table_t tokens = {
-	{Opt_mode, "n=%d"},
-	{Opt_err, NULL}
-};
-
-struct chiffrefs_fs_info {
-	struct chiffrefs_mount_opts mount_opts;
-};
-
 static int chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts)
 {
 	substring_t args[MAX_OPT_ARGS];
@@ -194,8 +173,8 @@ static int chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts
 
 		token = match_token(p, tokens, args);
 		switch (token) {
-		case Opt_mode:
-			if (match_octal(&args[0], &option))
+		case Opt_rotate:
+			if (match_int(&args[0], &option))
 				return -EINVAL;
 			opts->rotate = option;
 			break;
@@ -207,18 +186,13 @@ static int chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts
 
 int chiffrefs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct chiffrefs_fs_info *fsi;
 	struct inode *inode;
 	int err;
 
 	save_mount_options(sb, data);
 
-	fsi = kzalloc(sizeof(struct chiffrefs_fs_info), GFP_KERNEL);
-	sb->s_fs_info = fsi;
-	if (!fsi)
-		return -ENOMEM;
-
-	err = chiffrefs_parse_options(data, &fsi->mount_opts);
+	sb->s_fs_info = &chiffrefs_infos;
+	err = chiffrefs_parse_options(data, &(chiffrefs_infos.mount_opts));
 	if (err)
 		return err;
 
@@ -245,7 +219,6 @@ struct dentry *chiffrefs_mount(struct file_system_type *fs_type,
 
 static void chiffrefs_kill_sb(struct super_block *sb)
 {
-	kfree(sb->s_fs_info);
 	kill_litter_super(sb);
 }
 
@@ -265,7 +238,6 @@ static int __init init_chiffrefs_fs(void)
 		return -EBUSY;
 	}
 	++once;
-	printk("TOTOTOTOTOTOTOT");
 	return register_filesystem(&chiffrefs_fs_type);
 }
 fs_initcall(init_chiffrefs_fs);
