@@ -8,7 +8,7 @@
 #include <linux/sched.h>
 #include <linux/parser.h>
 #include <linux/magic.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/uio.h>
@@ -21,13 +21,16 @@ static struct chiffrefs_fs_info chiffrefs_infos;
 static const struct super_operations chiffrefs_ops;
 static const struct inode_operations chiffrefs_dir_inode_operations;
 
-static ssize_t chiffrefs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+static unsigned long once;
+
+static ssize_t
+chiffrefs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	int i;
 
-	for (i = 0; i < from->count; ++i) {
-		((char *)from->kvec->iov_base)[i] += chiffrefs_infos.mount_opts.rotate % 127;
-	}
+	for (i = 0; i < from->count; ++i)
+		((char *)from->kvec->iov_base)[i] +=
+			chiffrefs_infos.mount_opts.rotate % 127;
 	return generic_file_write_iter(iocb, from);
 }
 
@@ -61,9 +64,10 @@ const struct inode_operations chiffrefs_file_inode_operations = {
 };
 
 struct inode *chiffrefs_get_inode(struct super_block *sb,
-				  const struct inode *dir, umode_t mode, dev_t dev)
+				  const struct inode *dir,
+				  umode_t mode, dev_t dev)
 {
-	struct inode * inode = new_inode(sb);
+	struct inode *inode = new_inode(sb);
 
 	if (inode) {
 		inode->i_ino = get_next_ino();
@@ -94,9 +98,10 @@ struct inode *chiffrefs_get_inode(struct super_block *sb,
 }
 
 static int
-chiffrefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
+chiffrefs_mknod(struct inode *dir, struct dentry *dentry,
+		umode_t mode, dev_t dev)
 {
-	struct inode * inode = chiffrefs_get_inode(dir->i_sb, dir, mode, dev);
+	struct inode *inode = chiffrefs_get_inode(dir->i_sb, dir, mode, dev);
 	int error = -ENOSPC;
 
 	if (inode) {
@@ -108,27 +113,33 @@ chiffrefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t de
 	return error;
 }
 
-static int chiffrefs_mkdir(struct inode * dir, struct dentry * dentry, umode_t mode)
+static int
+chiffrefs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	int retval = chiffrefs_mknod(dir, dentry, mode | S_IFDIR, 0);
+
 	if (!retval)
 		inc_nlink(dir);
 	return retval;
 }
 
-static int chiffrefs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
+static int
+chiffrefs_create(struct inode *dir, struct dentry *dentry,
+		 umode_t mode, bool excl)
 {
 	return chiffrefs_mknod(dir, dentry, mode | S_IFREG, 0);
 }
 
-static int chiffrefs_symlink(struct inode * dir, struct dentry *dentry, const char * symname)
+static int
+chiffrefs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
 {
 	struct inode *inode;
 	int error = -ENOSPC;
 
 	inode = chiffrefs_get_inode(dir->i_sb, dir, S_IFLNK|S_IRWXUGO, 0);
 	if (inode) {
-		int l = strlen(symname)+1;
+		int l = strlen(symname) + 1;
+
 		error = page_symlink(inode, symname, l);
 		if (!error) {
 			d_instantiate(dentry, inode);
@@ -158,7 +169,8 @@ static const struct super_operations chiffrefs_ops = {
 	.show_options	= generic_show_options,
 };
 
-static int chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts)
+static int
+chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts)
 {
 	substring_t args[MAX_OPT_ARGS];
 	int option;
@@ -229,14 +241,10 @@ static struct file_system_type chiffrefs_fs_type = {
 	.fs_flags	= FS_USERNS_MOUNT,
 };
 
-static unsigned long once = 0;
-
 static int __init init_chiffrefs_fs(void)
 {
-	if (once > 0) {
-		printk("CANNOT LOAD CHIFFREFS MODULE");
+	if (once > 0)
 		return -EBUSY;
-	}
 	++once;
 	return register_filesystem(&chiffrefs_fs_type);
 }
