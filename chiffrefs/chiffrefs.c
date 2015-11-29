@@ -1,8 +1,8 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
+#include <linux/page-flags.h>
 #include <linux/highmem.h>
 #include <linux/time.h>
-#include <linux/init.h>
 #include <linux/string.h>
 #include <linux/backing-dev.h>
 #include <linux/sched.h>
@@ -10,6 +10,9 @@
 #include <linux/magic.h>
 #include <linux/slab.h>
 #include <asm/uaccess.h>
+#include <linux/module.h>
+#include <linux/mm.h>
+#include <linux/uio.h>
 
 #include "internal.h"
 
@@ -17,12 +20,42 @@
 
 static const struct super_operations chiffrefs_ops;
 static const struct inode_operations chiffrefs_dir_inode_operations;
+
+static ssize_t chiffrefs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	printk("iov: count=%lu\n", from->count);
+	return generic_file_write_iter(iocb, from);
+}
+
+static int chiffrefs_set_page_dirty(struct page *page)
+{
+	if (!PageReserved(page))
+		SetPageDirty(page);
+	return 0;
+}
+
 static const struct address_space_operations chiffrefs_aops = {
 	.readpage	= simple_readpage,
 	.write_begin	= simple_write_begin,
 	.write_end	= simple_write_end,
-	.set_page_dirty	= __set_page_dirty_no_writeback,
+	.set_page_dirty	= chiffrefs_set_page_dirty,
 };
+
+const struct file_operations chiffrefs_file_operations = {
+	.read_iter	= generic_file_read_iter,
+	.write_iter	= chiffrefs_file_write_iter,
+	.mmap		= generic_file_mmap,
+	.fsync		= noop_fsync,
+	.splice_read	= generic_file_splice_read,
+	.splice_write	= iter_file_splice_write,
+	.llseek		= generic_file_llseek,
+};
+
+const struct inode_operations chiffrefs_file_inode_operations = {
+	.setattr	= simple_setattr,
+	.getattr	= simple_getattr,
+};
+
 
 struct inode *chiffrefs_get_inode(struct super_block *sb,
 				const struct inode *dir, umode_t mode, dev_t dev)
@@ -153,7 +186,7 @@ static int chiffrefs_parse_options(char *data, struct chiffrefs_mount_opts *opts
 	int token;
 	char *p;
 
-	opts->rotate = CHIFFREFS_DEFAULT_MODE;
+	opts->rotate = CHIFFREFS_DEFAULT_ROTATE;
 
 	while ((p = strsep(&data, ",")) != NULL) {
 		if (!*p)
@@ -225,23 +258,22 @@ static struct file_system_type chiffrefs_fs_type = {
 
 static unsigned long once = 0;
 
-int __init init_chiffrefs_fs(void)
+static int __init init_chiffrefs_fs(void)
 {
 	if (once > 0) {
 		printk("CANNOT LOAD CHIFFREFS MODULE");
-		return -EDENIED;
+		return -EBUSY;
 	}
 	++once;
 	printk("TOTOTOTOTOTOTOT");
 	return register_filesystem(&chiffrefs_fs_type);
 }
+fs_initcall(init_chiffrefs_fs);
 
-void __exit exit_chiffrefs_fs(void)
+static void __exit exit_chiffrefs_fs(void)
 {
 	--once;
 }
-
-fs_initcall(init_chiffrefs_fs);
 module_exit(exit_chiffrefs_fs);
 
 MODULE_LICENSE("GPL");
